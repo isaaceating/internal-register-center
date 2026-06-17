@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><?= APP_CONFIG.APP_NAME ?></title>
+  <?!= include('Styles'); ?>
+</head>
+
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Lumens Internal Tool</div>
+        <h1>內部註冊中心</h1>
+        <p>提交跨部門服務需求，並追蹤 Ticket 與 JIRA 處理狀態。</p>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn secondary" onclick="openDepartmentAccess()">部門 Dashboard</button>
+        <button class="btn dark" onclick="openGmAccess()">GM Dashboard</button>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <section class="form-panel sticky-card">
+        <div class="section-title">
+          <span class="title-icon">✦</span>
+          <div>
+            <h2>提交註冊申請</h2>
+            <p>輸入工號後會自動帶出基本資料。</p>
+          </div>
+        </div>
+
+        <form id="ticketForm" onsubmit="handleSubmitTicket(event)">
+          <label>
+            工號
+            <div class="inline-field">
+              <input id="employee_id" name="employee_id" type="text" required placeholder="例如：10001" onblur="handleEmployeeLookup()">
+              <button type="button" class="btn mini" onclick="handleEmployeeLookup()">帶入</button>
+            </div>
+          </label>
+
+          <div class="two-col">
+            <label>
+              部門
+              <input id="requester_department" name="requester_department" type="text" required>
+            </label>
+
+            <label>
+              姓名
+              <input id="requester_name" name="requester_name" type="text" required>
+            </label>
+          </div>
+
+          <label>
+            Email
+            <input id="requester_email" name="requester_email" type="email" required>
+          </label>
+
+          <div class="two-col">
+            <label>
+              申請服務部門
+              <select id="target_department" name="target_department" required onchange="handleDepartmentChange()">
+                <option value="">請選擇</option>
+              </select>
+            </label>
+
+            <label>
+              需求類別
+              <select id="service_category" name="service_category" required>
+                <option value="">請先選擇部門</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            註冊主題
+            <input id="registration_subject" name="registration_subject" type="text" required placeholder="請簡短描述需求主題">
+          </label>
+
+          <label>
+            註冊說明
+            <textarea id="registration_description" name="registration_description" rows="5" required placeholder="可貼上連結、Drive 文件、會議紀錄或補充說明"></textarea>
+          </label>
+
+          <label>
+            附件
+            <input id="attachment" name="attachment" type="file">
+            <small>若尚未設定 Drive 附件資料夾，系統會略過檔案上傳。</small>
+          </label>
+
+          <label>
+            希望完成日
+            <input id="due_date" name="due_date" type="date" required>
+          </label>
+
+          <button id="submitBtn" class="btn primary full" type="submit">送出申請</button>
+        </form>
+      </section>
+
+      <section class="content-panel">
+        <div class="query-card">
+          <div class="section-title horizontal">
+            <span class="title-icon blue">●</span>
+            <div>
+              <h2>查詢 Ticket</h2>
+              <p>輸入工號即可查詢自己送出的註冊申請。</p>
+            </div>
+          </div>
+
+          <div class="query-row">
+            <input id="query_employee_id" type="text" placeholder="輸入工號，例如：10001">
+            <button class="btn primary" onclick="handleQueryTickets()">查詢</button>
+          </div>
+        </div>
+
+        <div id="summaryCards" class="summary-grid hidden"></div>
+
+        <div class="table-card">
+          <div class="table-header">
+            <div>
+              <h2 id="tableTitle">Ticket List</h2>
+              <p id="tableHint">請先輸入工號查詢，或從 Dashboard 進入。</p>
+            </div>
+            <button class="btn ghost" onclick="clearTicketTable()">清除</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>狀態</th>
+                  <th>Ticket ID</th>
+                  <th>註冊人</th>
+                  <th>註冊主題</th>
+                  <th>JIRA Key</th>
+                  <th>負責人</th>
+                  <th>建立日期</th>
+                  <th>最後更新</th>
+                </tr>
+              </thead>
+              <tbody id="ticketTableBody">
+                <tr>
+                  <td colspan="8" class="empty">目前尚未查詢資料。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="detailModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeModal('detailModal')"></div>
+    <div class="modal-card wide">
+      <div class="modal-header">
+        <h2 id="detailTitle">Ticket 詳細資料</h2>
+        <button class="icon-btn" onclick="closeModal('detailModal')">×</button>
+      </div>
+      <div id="detailContent" class="detail-content"></div>
+    </div>
+  </div>
+
+  <div id="deptAccessModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeModal('deptAccessModal')"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>部門 Dashboard</h2>
+        <button class="icon-btn" onclick="closeModal('deptAccessModal')">×</button>
+      </div>
+
+      <label>
+        部門
+        <select id="deptAccessDepartment"></select>
+      </label>
+
+      <label>
+        Access Code
+        <input id="deptAccessCode" type="password" placeholder="請輸入部門 Access Code">
+      </label>
+
+      <button class="btn primary full" onclick="handleOpenDeptDashboard()">進入 Dashboard</button>
+    </div>
+  </div>
+
+  <div id="gmAccessModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeModal('gmAccessModal')"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>GM Dashboard</h2>
+        <button class="icon-btn" onclick="closeModal('gmAccessModal')">×</button>
+      </div>
+
+      <label>
+        Access Code
+        <input id="gmAccessCode" type="password" placeholder="請輸入 GM Access Code">
+      </label>
+
+      <button class="btn dark full" onclick="handleOpenGmDashboard()">進入 GM Dashboard</button>
+    </div>
+  </div>
+
+  <div id="deptDashboardModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeModal('deptDashboardModal')"></div>
+    <div class="modal-card dashboard-modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="deptDashboardTitle">部門 Dashboard</h2>
+          <p>可依狀態、日期區間與服務類別篩選。</p>
+        </div>
+        <button class="icon-btn" onclick="closeModal('deptDashboardModal')">×</button>
+      </div>
+
+      <div class="filter-row">
+        <select id="deptFilterStatus">
+          <option value="">全部狀態</option>
+          <option value="Open">Open</option>
+          <option value="Overdue">Overdue</option>
+          <option value="Done">Done</option>
+        </select>
+
+        <input id="deptFilterStart" type="date">
+        <input id="deptFilterEnd" type="date">
+
+        <select id="deptFilterCategory">
+          <option value="">全部服務類別</option>
+        </select>
+
+        <button class="btn primary" onclick="reloadDeptDashboard()">套用篩選</button>
+      </div>
+
+      <div id="deptSummaryCards" class="summary-grid"></div>
+
+      <div class="table-wrap modal-table">
+        <table>
+          <thead>
+            <tr>
+              <th>狀態</th>
+              <th>Ticket ID</th>
+              <th>註冊人</th>
+              <th>註冊主題</th>
+              <th>JIRA Key</th>
+              <th>負責人</th>
+              <th>建立日期</th>
+              <th>最後更新</th>
+            </tr>
+          </thead>
+          <tbody id="deptTicketTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="gmDashboardModal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeModal('gmDashboardModal')"></div>
+    <div class="modal-card dashboard-modal">
+      <div class="modal-header">
+        <div>
+          <h2>GM Dashboard</h2>
+          <p>各部門 Ticket 統計總覽。</p>
+        </div>
+        <button class="icon-btn" onclick="closeModal('gmDashboardModal')">×</button>
+      </div>
+
+      <div id="gmTotalCards" class="summary-grid"></div>
+      <div id="gmDepartmentGrid" class="dept-grid"></div>
+    </div>
+  </div>
+
+  <?!= include('ClientJs'); ?>
+</body>
+</html>

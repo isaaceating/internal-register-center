@@ -1,0 +1,491 @@
+<script>
+let APP_STATE = {
+  serviceOptions: {
+    departments: [],
+    categoriesByDepartment: {}
+  },
+  deptAccess: {
+    department: '',
+    accessCode: ''
+  }
+};
+
+document.addEventListener('DOMContentLoaded', function () {
+  bootstrapApp();
+});
+
+function bootstrapApp() {
+  google.script.run
+    .withSuccessHandler(function (data) {
+      APP_STATE.serviceOptions = data.serviceOptions || {
+        departments: [],
+        categoriesByDepartment: {}
+      };
+
+      populateTargetDepartments();
+      populateAccessDepartments();
+
+      if (data.today) {
+        document.getElementById('due_date').value = data.today;
+      }
+    })
+    .withFailureHandler(handleServerError)
+    .getInitialData();
+}
+
+function populateTargetDepartments() {
+  const select = document.getElementById('target_department');
+  select.innerHTML = '<option value="">請選擇</option>';
+
+  APP_STATE.serviceOptions.departments.forEach(function (dept) {
+    select.innerHTML += `<option value="${escapeHtml(dept)}">${escapeHtml(dept)}</option>`;
+  });
+}
+
+function populateAccessDepartments() {
+  google.script.run
+    .withSuccessHandler(function (departments) {
+      const select = document.getElementById('deptAccessDepartment');
+      select.innerHTML = '';
+
+      departments.forEach(function (dept) {
+        select.innerHTML += `<option value="${escapeHtml(dept)}">${escapeHtml(dept)}</option>`;
+      });
+    })
+    .withFailureHandler(handleServerError)
+    .getDashboardDepartments();
+}
+
+function handleDepartmentChange() {
+  const dept = document.getElementById('target_department').value;
+  const categorySelect = document.getElementById('service_category');
+  const categories = APP_STATE.serviceOptions.categoriesByDepartment[dept] || [];
+
+  categorySelect.innerHTML = '<option value="">請選擇</option>';
+
+  categories.forEach(function (category) {
+    categorySelect.innerHTML += `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`;
+  });
+}
+
+function handleEmployeeLookup() {
+  const employeeId = document.getElementById('employee_id').value.trim();
+  if (!employeeId) return;
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.found) {
+        showToast(res.message || '查無此工號', 'error');
+        return;
+      }
+
+      document.getElementById('requester_department').value = res.employee.department || '';
+      document.getElementById('requester_name').value = res.employee.name || '';
+      document.getElementById('requester_email').value = res.employee.email || '';
+      document.getElementById('query_employee_id').value = res.employee.employee_id || employeeId;
+
+      showToast('已帶入員工資料', 'success');
+    })
+    .withFailureHandler(handleServerError)
+    .lookupEmployee(employeeId);
+}
+
+function handleSubmitTicket(event) {
+  event.preventDefault();
+
+  const submitBtn = document.getElementById('submitBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = '送出中...';
+
+  const form = document.getElementById('ticketForm');
+  const fileInput = document.getElementById('attachment');
+  const file = fileInput.files && fileInput.files[0];
+
+  const payload = {
+    employee_id: form.employee_id.value.trim(),
+    requester_department: form.requester_department.value.trim(),
+    requester_name: form.requester_name.value.trim(),
+    requester_email: form.requester_email.value.trim(),
+    target_department: form.target_department.value.trim(),
+    service_category: form.service_category.value.trim(),
+    registration_subject: form.registration_subject.value.trim(),
+    registration_description: form.registration_description.value.trim(),
+    due_date: form.due_date.value,
+    attachment_url: '',
+    attachment: null
+  };
+
+  if (file) {
+    const reader = new FileReader();
+
+    reader.onload = function (e) {
+      payload.attachment = {
+        name: file.name,
+        mimeType: file.type,
+        data: String(e.target.result).split(',')[1]
+      };
+
+      submitPayload(payload, submitBtn, form);
+    };
+
+    reader.onerror = function () {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出申請';
+      showToast('附件讀取失敗，請重新選擇檔案。', 'error');
+    };
+
+    reader.readAsDataURL(file);
+  } else {
+    submitPayload(payload, submitBtn, form);
+  }
+}
+
+function submitPayload(payload, submitBtn, form) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出申請';
+
+      if (!res.ok) {
+        showToast(res.message || '送出失敗', 'error');
+        return;
+      }
+
+      showToast(`申請已送出：${res.ticket_id}`, 'success');
+
+      const employeeId = payload.employee_id;
+      form.reset();
+      document.getElementById('query_employee_id').value = employeeId;
+      handleQueryTickets();
+    })
+    .withFailureHandler(function (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出申請';
+      handleServerError(err);
+    })
+    .submitTicket(payload);
+}
+
+function handleQueryTickets() {
+  const employeeId = document.getElementById('query_employee_id').value.trim();
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.ok) {
+        showToast(res.message || '查詢失敗', 'error');
+        return;
+      }
+
+      document.getElementById('tableTitle').textContent = '我的 Ticket';
+      document.getElementById('tableHint').textContent = `工號 ${employeeId} 的查詢結果`;
+      renderSummary('summaryCards', res.summary);
+      renderTicketTable('ticketTableBody', res.tickets);
+    })
+    .withFailureHandler(handleServerError)
+    .queryTicketsByEmployee(employeeId);
+}
+
+function renderSummary(containerId, summary) {
+  const el = document.getElementById(containerId);
+  el.classList.remove('hidden');
+
+  el.innerHTML = `
+    <div class="summary-card">
+      <div class="label">Total</div>
+      <div class="value">${summary.total || 0}</div>
+    </div>
+    <div class="summary-card open">
+      <div class="label">Open</div>
+      <div class="value">${summary.open || 0}</div>
+    </div>
+    <div class="summary-card overdue">
+      <div class="label">Overdue</div>
+      <div class="value">${summary.overdue || 0}</div>
+    </div>
+    <div class="summary-card done">
+      <div class="label">Done</div>
+      <div class="value">${summary.done || 0}</div>
+    </div>
+  `;
+}
+
+function renderTicketTable(tbodyId, tickets) {
+  const tbody = document.getElementById(tbodyId);
+
+  if (!tickets || tickets.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty">沒有符合條件的 Ticket。</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tickets.map(function (ticket) {
+    return `
+      <tr>
+        <td>${renderStatus(ticket.display_status)}</td>
+        <td><a class="ticket-link" onclick="openTicketDetail('${escapeAttr(ticket.ticket_id)}')">${escapeHtml(ticket.ticket_id)}</a></td>
+        <td>${escapeHtml(ticket.requester_name)}</td>
+        <td>${escapeHtml(ticket.registration_subject)}</td>
+        <td>${renderJira(ticket)}</td>
+        <td>${escapeHtml(ticket.jira_assignee || '')}</td>
+        <td>${escapeHtml(ticket.created_at || '')}</td>
+        <td>${renderLastUpdate(ticket)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderStatus(status) {
+  if (status === 'Done') {
+    return `<span class="status-pill status-done">● Done</span>`;
+  }
+
+  if (status === 'Overdue') {
+    return `<span class="status-pill status-overdue">● Overdue</span>`;
+  }
+
+  return `<span class="status-pill status-open">● Open</span>`;
+}
+
+function renderJira(ticket) {
+  if (!ticket.jira_key) return '<span class="muted">尚未建立</span>';
+
+  if (ticket.jira_url) {
+    return `<a class="jira-link" href="${escapeAttr(ticket.jira_url)}" target="_blank">${escapeHtml(ticket.jira_key)}</a>`;
+  }
+
+  return escapeHtml(ticket.jira_key);
+}
+
+function renderLastUpdate(ticket) {
+  const comment = ticket.jira_last_comment || '';
+  const time = ticket.jira_last_comment_at || ticket.updated_at || '';
+
+  if (!comment && !time) return '';
+
+  const shortComment = comment.length > 42 ? comment.slice(0, 42) + '...' : comment;
+
+  return `
+    <div>${escapeHtml(time)}</div>
+    <small>${escapeHtml(shortComment)}</small>
+  `;
+}
+
+function clearTicketTable() {
+  document.getElementById('summaryCards').classList.add('hidden');
+  document.getElementById('ticketTableBody').innerHTML = `<tr><td colspan="8" class="empty">目前尚未查詢資料。</td></tr>`;
+  document.getElementById('tableTitle').textContent = 'Ticket List';
+  document.getElementById('tableHint').textContent = '請先輸入工號查詢，或從 Dashboard 進入。';
+}
+
+function openTicketDetail(ticketId) {
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.ok) {
+        showToast(res.message || '找不到 Ticket', 'error');
+        return;
+      }
+
+      renderTicketDetail(res.ticket);
+      openModal('detailModal');
+    })
+    .withFailureHandler(handleServerError)
+    .getTicketDetail(ticketId);
+}
+
+function renderTicketDetail(ticket) {
+  document.getElementById('detailTitle').textContent = `Ticket 詳細資料：${ticket.ticket_id}`;
+
+  const fields = [
+    ['狀態', renderStatus(ticket.display_status), true],
+    ['Ticket ID', ticket.ticket_id],
+    ['工號', ticket.employee_id],
+    ['申請人部門', ticket.requester_department],
+    ['註冊人', ticket.requester_name],
+    ['Email', ticket.requester_email],
+    ['申請服務部門', ticket.target_department],
+    ['需求類別', ticket.service_category],
+    ['註冊主題', ticket.registration_subject],
+    ['註冊說明', ticket.registration_description],
+    ['附件', ticket.attachment_url ? `<a href="${escapeAttr(ticket.attachment_url)}" target="_blank">開啟附件</a>` : '無', true],
+    ['希望完成日', ticket.due_date],
+    ['JIRA Key', renderJira(ticket), true],
+    ['JIRA Project', ticket.jira_project],
+    ['JIRA Issue Type', ticket.jira_issue_type],
+    ['負責人 JIRA 帳號', ticket.jira_assignee],
+    ['負責人 Email', ticket.owner_email],
+    ['通知群組', ticket.cc_group],
+    ['JIRA 狀態', ticket.jira_status],
+    ['JIRA 最後留言', ticket.jira_last_comment],
+    ['JIRA 最後留言時間', ticket.jira_last_comment_at],
+    ['建立日期', ticket.created_at],
+    ['最後更新', ticket.updated_at],
+    ['完成日期', ticket.completed_at]
+  ];
+
+  document.getElementById('detailContent').innerHTML = fields.map(function (field) {
+    return `
+      <div class="detail-row">
+        <div class="label">${escapeHtml(field[0])}</div>
+        <div class="value">${field[2] ? field[1] : escapeHtml(field[1] || '')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openDepartmentAccess() {
+  openModal('deptAccessModal');
+}
+
+function openGmAccess() {
+  openModal('gmAccessModal');
+}
+
+function handleOpenDeptDashboard() {
+  const department = document.getElementById('deptAccessDepartment').value;
+  const accessCode = document.getElementById('deptAccessCode').value.trim();
+
+  APP_STATE.deptAccess = {
+    department: department,
+    accessCode: accessCode
+  };
+
+  closeModal('deptAccessModal');
+  openModal('deptDashboardModal');
+
+  document.getElementById('deptDashboardTitle').textContent = `${department} Dashboard`;
+  populateDeptCategoryFilter(department);
+  reloadDeptDashboard();
+}
+
+function populateDeptCategoryFilter(department) {
+  const select = document.getElementById('deptFilterCategory');
+  const categories = APP_STATE.serviceOptions.categoriesByDepartment[department] || [];
+
+  select.innerHTML = '<option value="">全部服務類別</option>';
+
+  categories.forEach(function (category) {
+    select.innerHTML += `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`;
+  });
+}
+
+function reloadDeptDashboard() {
+  const filters = {
+    department: APP_STATE.deptAccess.department,
+    access_code: APP_STATE.deptAccess.accessCode,
+    status: document.getElementById('deptFilterStatus').value,
+    start_date: document.getElementById('deptFilterStart').value,
+    end_date: document.getElementById('deptFilterEnd').value,
+    service_category: document.getElementById('deptFilterCategory').value
+  };
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.ok) {
+        showToast(res.message || 'Dashboard 權限錯誤', 'error');
+        closeModal('deptDashboardModal');
+        return;
+      }
+
+      renderSummary('deptSummaryCards', res.summary);
+      renderTicketTable('deptTicketTableBody', res.tickets);
+    })
+    .withFailureHandler(handleServerError)
+    .getDepartmentDashboardData(filters);
+}
+
+function handleOpenGmDashboard() {
+  const accessCode = document.getElementById('gmAccessCode').value.trim();
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res.ok) {
+        showToast(res.message || 'GM Dashboard 權限錯誤', 'error');
+        return;
+      }
+
+      closeModal('gmAccessModal');
+      openModal('gmDashboardModal');
+
+      renderSummary('gmTotalCards', res.totalSummary);
+      renderGmDepartments(res.departments);
+    })
+    .withFailureHandler(handleServerError)
+    .getGmDashboardData({
+      access_code: accessCode
+    });
+}
+
+function renderGmDepartments(departments) {
+  const el = document.getElementById('gmDepartmentGrid');
+
+  if (!departments || departments.length === 0) {
+    el.innerHTML = `<div class="empty">目前沒有資料。</div>`;
+    return;
+  }
+
+  el.innerHTML = departments.map(function (item) {
+    const s = item.summary || {};
+    return `
+      <div class="dept-card">
+        <h3>${escapeHtml(item.department)}</h3>
+        <div class="dept-stats">
+          <div class="dept-stat">
+            <div class="label">Total</div>
+            <div class="value">${s.total || 0}</div>
+          </div>
+          <div class="dept-stat">
+            <div class="label">Open</div>
+            <div class="value" style="color:#2563eb">${s.open || 0}</div>
+          </div>
+          <div class="dept-stat">
+            <div class="label">Overdue</div>
+            <div class="value" style="color:#dc2626">${s.overdue || 0}</div>
+          </div>
+          <div class="dept-stat">
+            <div class="label">Done</div>
+            <div class="value" style="color:#16a34a">${s.done || 0}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+function showToast(message, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast ' + (type || '');
+  toast.classList.remove('hidden');
+
+  setTimeout(function () {
+    toast.classList.add('hidden');
+  }, 3200);
+}
+
+function handleServerError(err) {
+  console.error(err);
+  showToast(err && err.message ? err.message : '系統錯誤，請稍後再試。', 'error');
+}
+
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll('`', '&#096;');
+}
+</script>
