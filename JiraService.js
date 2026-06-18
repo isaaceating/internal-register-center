@@ -147,8 +147,23 @@ function buildJiraDescription_(ticket) {
     ticket.registration_description,
     '',
     '附件:',
-    ticket.attachment_url || '無'
+    formatAttachmentLinksForJira_(ticket.attachment_url)
   ].join('\n');
+}
+
+function formatAttachmentLinksForJira_(attachmentUrlText) {
+  const text = String(attachmentUrlText || '').trim();
+
+  if (!text) {
+    return '無';
+  }
+
+  return text
+    .split(/\n+/)
+    .map(function (url, index) {
+      return '附件 ' + (index + 1) + ': ' + url;
+    })
+    .join('\n');
 }
 
 function syncJiraTickets() {

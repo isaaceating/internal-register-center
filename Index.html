@@ -13,51 +13,53 @@
     <header class="topbar">
       <div>
         <div class="eyebrow">Lumens Internal Tool</div>
-        <h1>內部註冊中心</h1>
+        <h1>內部服務註冊中心</h1>
         <p>提交跨部門服務需求，並追蹤 Ticket 與 JIRA 處理狀態。</p>
       </div>
 
-      <div class="top-actions">
-        <button class="btn secondary" onclick="openDepartmentAccess()">部門 Dashboard</button>
-        <button class="btn dark" onclick="openGmAccess()">GM Dashboard</button>
+      <div class="manager-entry">
+        <div>
+          <div class="manager-label">主管入口</div>
+          <div class="manager-desc">主管或部門窗口可查看總覽</div>
+        </div>
+        <div class="manager-actions">
+          <button class="btn secondary" onclick="openDepartmentAccess()">部門總覽</button>
+          <button class="btn dark" onclick="openGmAccess()">GM 總覽</button>
+        </div>
       </div>
     </header>
 
-    <main class="main-grid">
-      <section class="form-panel sticky-card">
-        <div class="section-title">
-          <span class="title-icon">✦</span>
-          <div>
-            <h2>提交註冊申請</h2>
-            <p>輸入工號後會自動帶出基本資料。</p>
+    <main class="main-grid" id="mainGrid">
+      <section class="form-panel sticky-card" id="formPanel">
+        <div class="section-title form-title-row">
+          <div class="title-left">
+            <span class="title-icon">✦</span>
+            <div>
+              <h2>提交註冊單</h2>              
+            </div>
           </div>
+
+          <button class="collapse-btn" type="button" onclick="toggleFormPanel()" title="收合 / 展開註冊單">
+            <span id="collapseIcon">‹</span>
+          </button>
         </div>
 
         <form id="ticketForm" onsubmit="handleSubmitTicket(event)">
           <label>
             工號
             <div class="inline-field">
-              <input id="employee_id" name="employee_id" type="text" required placeholder="例如：10001" onblur="handleEmployeeLookup()">
-              <button type="button" class="btn mini" onclick="handleEmployeeLookup()">帶入</button>
+              <input id="employee_id" name="employee_id" type="text" required placeholder="例如：10001" onkeydown="handleEmployeeEnter(event)">
+              <button type="button" class="btn mini" onclick="handleEmployeeLookup()">驗證</button>
             </div>
           </label>
 
-          <div class="two-col">
-            <label>
-              部門
-              <input id="requester_department" name="requester_department" type="text" required>
-            </label>
-
-            <label>
-              姓名
-              <input id="requester_name" name="requester_name" type="text" required>
-            </label>
+          <div id="employeeInfoCard" class="employee-info-card hidden">
+            <div id="employeeInfoContent"></div>
           </div>
 
-          <label>
-            Email
-            <input id="requester_email" name="requester_email" type="email" required>
-          </label>
+          <input id="requester_department" name="requester_department" type="hidden">
+          <input id="requester_name" name="requester_name" type="hidden">
+          <input id="requester_email" name="requester_email" type="hidden">
 
           <div class="two-col">
             <label>
@@ -82,13 +84,23 @@
 
           <label>
             註冊說明
-            <textarea id="registration_description" name="registration_description" rows="5" required placeholder="可貼上連結、Drive 文件、會議紀錄或補充說明"></textarea>
+            <textarea id="registration_description" name="registration_description" rows="5" required placeholder="可貼上連結、或上傳附件"></textarea>
           </label>
 
           <label>
             附件
-            <input id="attachment" name="attachment" type="file">
-            <small>若尚未設定 Drive 附件資料夾，系統會略過檔案上傳。</small>
+            <input id="attachment" name="attachment" type="file" multiple class="file-input-hidden" onchange="handleAttachmentSelect(event)">
+
+            <div class="attachment-actions">
+              <button type="button" class="btn mini" onclick="openAttachmentPicker()">新增附件</button>
+              <button type="button" class="btn ghost mini-clear" onclick="clearAttachments()">清除全部</button>
+            </div>
+
+            <small>可分次新增附件，最多 5 個，每個檔案上限 10MB。</small>
+
+            <div id="attachmentList" class="attachment-list empty">
+              尚未新增附件
+            </div>
           </label>
 
           <label>
@@ -102,17 +114,34 @@
 
       <section class="content-panel">
         <div class="query-card">
-          <div class="section-title horizontal">
-            <span class="title-icon blue">●</span>
+          <div class="query-header">
+            <div class="query-icon">●</div>
             <div>
-              <h2>查詢 Ticket</h2>
-              <p>輸入工號即可查詢自己送出的註冊申請。</p>
+              <h2>查詢我的註冊</h2>              
             </div>
           </div>
 
           <div class="query-row">
-            <input id="query_employee_id" type="text" placeholder="輸入工號，例如：10001">
-            <button class="btn primary" onclick="handleQueryTickets()">查詢</button>
+            <input id="query_employee_id" type="text" placeholder="輸入工號，例如：10001" onkeydown="handleQueryEnter(event)">
+            <button class="btn primary query-btn" onclick="handleQueryTickets()">查詢</button>
+          </div>
+
+          <div class="main-filter-row">
+            <select id="mainFilterStatus" onchange="applyMainFilters()">
+              <option value="">全部狀態</option>
+              <option value="Open">Open</option>
+              <option value="Overdue">Overdue</option>
+              <option value="Done">Done</option>
+            </select>
+
+            <input id="mainFilterStart" type="date" onchange="applyMainFilters()">
+            <input id="mainFilterEnd" type="date" onchange="applyMainFilters()">
+
+            <select id="mainFilterDepartment" onchange="applyMainFilters()">
+              <option value="">All 服務部門</option>
+            </select>
+
+            <button class="btn ghost" onclick="clearMainFilters()">清除篩選</button>
           </div>
         </div>
 
@@ -121,8 +150,8 @@
         <div class="table-card">
           <div class="table-header">
             <div>
-              <h2 id="tableTitle">Ticket List</h2>
-              <p id="tableHint">請先輸入工號查詢，或從 Dashboard 進入。</p>
+              <h2 id="tableTitle">註冊紀錄</h2>
+              <p id="tableHint">請先輸入工號查詢。</p>
             </div>
             <button class="btn ghost" onclick="clearTicketTable()">清除</button>
           </div>
@@ -132,13 +161,13 @@
               <thead>
                 <tr>
                   <th>狀態</th>
-                  <th>Ticket ID</th>
+                  <th>ID</th>
                   <th>註冊人</th>
-                  <th>註冊主題</th>
-                  <th>JIRA Key</th>
+                  <th>主題</th>
+                  <th>JIRA</th>
                   <th>負責人</th>
                   <th>建立日期</th>
-                  <th>最後更新</th>
+                  <th>最新回覆</th>
                 </tr>
               </thead>
               <tbody id="ticketTableBody">
@@ -159,7 +188,7 @@
     <div class="modal-backdrop" onclick="closeModal('detailModal')"></div>
     <div class="modal-card wide">
       <div class="modal-header">
-        <h2 id="detailTitle">Ticket 詳細資料</h2>
+        <h2 id="detailTitle">註冊詳細資料</h2>
         <button class="icon-btn" onclick="closeModal('detailModal')">×</button>
       </div>
       <div id="detailContent" class="detail-content"></div>
@@ -218,7 +247,7 @@
 
       <div class="filter-row">
         <select id="deptFilterStatus">
-          <option value="">全部狀態</option>
+          <option value="">所有狀態</option>
           <option value="Open">Open</option>
           <option value="Overdue">Overdue</option>
           <option value="Done">Done</option>
@@ -228,7 +257,7 @@
         <input id="deptFilterEnd" type="date">
 
         <select id="deptFilterCategory">
-          <option value="">全部服務類別</option>
+          <option value="">所有服務類別</option>
         </select>
 
         <button class="btn primary" onclick="reloadDeptDashboard()">套用篩選</button>

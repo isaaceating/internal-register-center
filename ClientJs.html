@@ -7,8 +7,14 @@ let APP_STATE = {
   deptAccess: {
     department: '',
     accessCode: ''
-  }
+  },
+  currentTickets: [],
+  currentEmployeeId: '',
+  selectedFiles: []
 };
+
+const MAX_ATTACHMENT_COUNT = 5;
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
 document.addEventListener('DOMContentLoaded', function () {
   bootstrapApp();
@@ -24,6 +30,7 @@ function bootstrapApp() {
 
       populateTargetDepartments();
       populateAccessDepartments();
+      populateMainDepartmentFilter();
 
       if (data.today) {
         document.getElementById('due_date').value = data.today;
@@ -56,6 +63,15 @@ function populateAccessDepartments() {
     .getDashboardDepartments();
 }
 
+function populateMainDepartmentFilter() {
+  const select = document.getElementById('mainFilterDepartment');
+  select.innerHTML = '<option value="">全部申請服務部門</option>';
+
+  APP_STATE.serviceOptions.departments.forEach(function (dept) {
+    select.innerHTML += `<option value="${escapeHtml(dept)}">${escapeHtml(dept)}</option>`;
+  });
+}
+
 function handleDepartmentChange() {
   const dept = document.getElementById('target_department').value;
   const categorySelect = document.getElementById('service_category');
@@ -68,14 +84,35 @@ function handleDepartmentChange() {
   });
 }
 
+function handleEmployeeEnter(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    handleEmployeeLookup();
+  }
+}
+
+function handleQueryEnter(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    handleQueryTickets();
+  }
+}
+
 function handleEmployeeLookup() {
   const employeeId = document.getElementById('employee_id').value.trim();
-  if (!employeeId) return;
+
+  if (!employeeId) {
+    renderEmployeeInfoError('請先輸入工號。');
+    return;
+  }
 
   google.script.run
     .withSuccessHandler(function (res) {
       if (!res.found) {
-        showToast(res.message || '查無此工號', 'error');
+        document.getElementById('requester_department').value = '';
+        document.getElementById('requester_name').value = '';
+        document.getElementById('requester_email').value = '';
+        renderEmployeeInfoError(res.message || '查無此工號。');
         return;
       }
 
@@ -84,60 +121,237 @@ function handleEmployeeLookup() {
       document.getElementById('requester_email').value = res.employee.email || '';
       document.getElementById('query_employee_id').value = res.employee.employee_id || employeeId;
 
+      renderEmployeeInfo(res.employee);
       showToast('已帶入員工資料', 'success');
     })
     .withFailureHandler(handleServerError)
     .lookupEmployee(employeeId);
 }
 
+function renderEmployeeInfo(employee) {
+  const card = document.getElementById('employeeInfoCard');
+  const content = document.getElementById('employeeInfoContent');
+
+  card.classList.remove('hidden', 'error');
+
+  content.innerHTML = `
+    <div class="employee-info-grid">
+      <div class="employee-info-row">
+        <div class="label">部門</div>
+        <div class="value">${escapeHtml(employee.department || '')}</div>
+      </div>
+      <div class="employee-info-row">
+        <div class="label">姓名</div>
+        <div class="value">${escapeHtml(employee.name || '')}</div>
+      </div>
+      <div class="employee-info-row">
+        <div class="label">Email</div>
+        <div class="value">${escapeHtml(employee.email || '')}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderEmployeeInfoError(message) {
+  const card = document.getElementById('employeeInfoCard');
+  const content = document.getElementById('employeeInfoContent');
+
+  card.classList.remove('hidden');
+  card.classList.add('error');
+
+  content.innerHTML = `
+    <div class="employee-error-title">工號查詢失敗</div>
+    <div class="employee-error-message">${escapeHtml(message || '請確認工號是否正確。')}</div>
+  `;
+}
+
+function openAttachmentPicker() {
+  document.getElementById('attachment').click();
+}
+
+function handleAttachmentSelect(event) {
+  const incomingFiles = event.target.files ? Array.from(event.target.files) : [];
+
+  if (incomingFiles.length === 0) return;
+
+  const accepted = [];
+  const rejected = [];
+
+  incomingFiles.forEach(function (file) {
+    if (APP_STATE.selectedFiles.length + accepted.length >= MAX_ATTACHMENT_COUNT) {
+      rejected.push(file.name + '：超過最多 5 個附件限制');
+      return;
+    }
+
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      rejected.push(file.name + '：檔案超過 10MB');
+      return;
+    }
+
+    const isDuplicate = APP_STATE.selectedFiles.concat(accepted).some(function (existing) {
+      return existing.name === file.name &&
+        existing.size === file.size &&
+        existing.lastModified === file.lastModified;
+    });
+
+    if (isDuplicate) {
+      rejected.push(file.name + '：已經在附件清單中');
+      return;
+    }
+
+    accepted.push(file);
+  });
+
+  APP_STATE.selectedFiles = APP_STATE.selectedFiles.concat(accepted);
+  renderAttachmentList();
+
+  event.target.value = '';
+
+  if (accepted.length > 0) {
+    showToast('已新增 ' + accepted.length + ' 個附件', 'success');
+  }
+
+  if (rejected.length > 0) {
+    showToast(rejected.join('；'), 'error');
+  }
+}
+
+function renderAttachmentList() {
+  const el = document.getElementById('attachmentList');
+  const files = APP_STATE.selectedFiles || [];
+
+  if (files.length === 0) {
+    el.className = 'attachment-list empty';
+    el.innerHTML = '尚未新增附件';
+    return;
+  }
+
+  el.className = 'attachment-list';
+
+  el.innerHTML = files.map(function (file, index) {
+    return `
+      <div class="attachment-item">
+        <div>
+          <div class="attachment-name">${escapeHtml(file.name)}</div>
+          <div class="attachment-size">${formatFileSize(file.size)}</div>
+        </div>
+        <button type="button" class="attachment-remove" onclick="removeAttachment(${index})">移除</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function removeAttachment(index) {
+  APP_STATE.selectedFiles.splice(index, 1);
+  renderAttachmentList();
+}
+
+function clearAttachments() {
+  APP_STATE.selectedFiles = [];
+  document.getElementById('attachment').value = '';
+  renderAttachmentList();
+}
+
+function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return '';
+
+  if (bytes < 1024) {
+    return bytes + ' B';
+  }
+
+  if (bytes < 1024 * 1024) {
+    return Math.round(bytes / 1024) + ' KB';
+  }
+
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function readFilesAsAttachments(files) {
+  return Promise.all(files.map(function (file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        resolve({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+          data: String(e.target.result).split(',')[1]
+        });
+      };
+
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }));
+}
+
 function handleSubmitTicket(event) {
   event.preventDefault();
+
+  const requesterDepartment = document.getElementById('requester_department').value.trim();
+  const requesterName = document.getElementById('requester_name').value.trim();
+  const requesterEmail = document.getElementById('requester_email').value.trim();
+
+  if (!requesterDepartment || !requesterName || !requesterEmail) {
+    renderEmployeeInfoError('請先輸入正確工號並按「輸入」，確認系統帶出部門、姓名與 Email 後再送出。');
+    return;
+  }
 
   const submitBtn = document.getElementById('submitBtn');
   submitBtn.disabled = true;
   submitBtn.textContent = '送出中...';
 
   const form = document.getElementById('ticketForm');
-  const fileInput = document.getElementById('attachment');
-  const file = fileInput.files && fileInput.files[0];
+  const files = APP_STATE.selectedFiles || [];
 
   const payload = {
     employee_id: form.employee_id.value.trim(),
-    requester_department: form.requester_department.value.trim(),
-    requester_name: form.requester_name.value.trim(),
-    requester_email: form.requester_email.value.trim(),
+    requester_department: requesterDepartment,
+    requester_name: requesterName,
+    requester_email: requesterEmail,
     target_department: form.target_department.value.trim(),
     service_category: form.service_category.value.trim(),
     registration_subject: form.registration_subject.value.trim(),
     registration_description: form.registration_description.value.trim(),
     due_date: form.due_date.value,
     attachment_url: '',
-    attachment: null
+    attachments: []
   };
 
-  if (file) {
-    const reader = new FileReader();
-
-    reader.onload = function (e) {
-      payload.attachment = {
-        name: file.name,
-        mimeType: file.type,
-        data: String(e.target.result).split(',')[1]
-      };
-
-      submitPayload(payload, submitBtn, form);
-    };
-
-    reader.onerror = function () {
-      submitBtn.disabled = false;
-      submitBtn.textContent = '送出申請';
-      showToast('附件讀取失敗，請重新選擇檔案。', 'error');
-    };
-
-    reader.readAsDataURL(file);
+  if (files.length > 0) {
+    readFilesAsAttachments(files)
+      .then(function (attachments) {
+        payload.attachments = attachments;
+        submitPayload(payload, submitBtn, form);
+      })
+      .catch(function () {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '送出申請';
+        showToast('附件讀取失敗，請重新選擇檔案。', 'error');
+      });
   } else {
     submitPayload(payload, submitBtn, form);
   }
+}
+
+function readFilesAsAttachments(files) {
+  return Promise.all(files.map(function (file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        resolve({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          data: String(e.target.result).split(',')[1]
+        });
+      };
+
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }));
 }
 
 function submitPayload(payload, submitBtn, form) {
@@ -155,6 +369,15 @@ function submitPayload(payload, submitBtn, form) {
 
       const employeeId = payload.employee_id;
       form.reset();
+
+      document.getElementById('requester_department').value = '';
+      document.getElementById('requester_name').value = '';
+      document.getElementById('requester_email').value = '';
+      document.getElementById('employeeInfoCard').classList.add('hidden');
+
+      APP_STATE.selectedFiles = [];
+      renderAttachmentList();
+
       document.getElementById('query_employee_id').value = employeeId;
       handleQueryTickets();
     })
@@ -176,13 +399,87 @@ function handleQueryTickets() {
         return;
       }
 
-      document.getElementById('tableTitle').textContent = '我的 Ticket';
+      APP_STATE.currentTickets = sortTicketsNewestFirst(res.tickets || []);
+      APP_STATE.currentEmployeeId = employeeId;
+
+      document.getElementById('tableTitle').textContent = '我的註冊紀錄';
       document.getElementById('tableHint').textContent = `工號 ${employeeId} 的查詢結果`;
-      renderSummary('summaryCards', res.summary);
-      renderTicketTable('ticketTableBody', res.tickets);
+
+      applyMainFilters();
     })
     .withFailureHandler(handleServerError)
     .queryTicketsByEmployee(employeeId);
+}
+
+function applyMainFilters() {
+  let tickets = (APP_STATE.currentTickets || []).slice();
+
+  const status = document.getElementById('mainFilterStatus').value;
+  const startDate = document.getElementById('mainFilterStart').value;
+  const endDate = document.getElementById('mainFilterEnd').value;
+  const department = document.getElementById('mainFilterDepartment').value;
+
+  if (status) {
+    tickets = tickets.filter(function (ticket) {
+      return ticket.display_status === status;
+    });
+  }
+
+  if (department) {
+    tickets = tickets.filter(function (ticket) {
+      return ticket.target_department === department;
+    });
+  }
+
+  if (startDate) {
+    const start = new Date(startDate);
+    tickets = tickets.filter(function (ticket) {
+      return parseAnyDate(ticket.created_at) >= start;
+    });
+  }
+
+  if (endDate) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    tickets = tickets.filter(function (ticket) {
+      return parseAnyDate(ticket.created_at) <= end;
+    });
+  }
+
+  tickets = sortTicketsNewestFirst(tickets);
+
+  renderSummary('summaryCards', buildClientSummary(tickets));
+  renderTicketTable('ticketTableBody', tickets);
+}
+
+function clearMainFilters() {
+  document.getElementById('mainFilterStatus').value = '';
+  document.getElementById('mainFilterStart').value = '';
+  document.getElementById('mainFilterEnd').value = '';
+  document.getElementById('mainFilterDepartment').value = '';
+
+  applyMainFilters();
+}
+
+function buildClientSummary(tickets) {
+  const summary = {
+    total: tickets.length,
+    open: 0,
+    overdue: 0,
+    done: 0
+  };
+
+  tickets.forEach(function (ticket) {
+    if (ticket.display_status === 'Done') {
+      summary.done++;
+    } else if (ticket.display_status === 'Overdue') {
+      summary.overdue++;
+    } else {
+      summary.open++;
+    }
+  });
+
+  return summary;
 }
 
 function renderSummary(containerId, summary) {
@@ -226,7 +523,7 @@ function renderTicketTable(tbodyId, tickets) {
         <td>${escapeHtml(ticket.registration_subject)}</td>
         <td>${renderJira(ticket)}</td>
         <td>${escapeHtml(ticket.jira_assignee || '')}</td>
-        <td>${escapeHtml(ticket.created_at || '')}</td>
+        <td>${escapeHtml(formatDateOnlyForDisplay(ticket.created_at || ''))}</td>
         <td>${renderLastUpdate(ticket)}</td>
       </tr>
     `;
@@ -235,14 +532,14 @@ function renderTicketTable(tbodyId, tickets) {
 
 function renderStatus(status) {
   if (status === 'Done') {
-    return `<span class="status-pill status-done">● Done</span>`;
+    return `<span class="status-pill status-done">完成</span>`;
   }
 
   if (status === 'Overdue') {
-    return `<span class="status-pill status-overdue">● Overdue</span>`;
+    return `<span class="status-pill status-overdue">已逾期</span>`;
   }
 
-  return `<span class="status-pill status-open">● Open</span>`;
+  return `<span class="status-pill status-open">處理中</span>`;
 }
 
 function renderJira(ticket) {
@@ -257,23 +554,28 @@ function renderJira(ticket) {
 
 function renderLastUpdate(ticket) {
   const comment = ticket.jira_last_comment || '';
-  const time = ticket.jira_last_comment_at || ticket.updated_at || '';
+  const rawDate = ticket.jira_last_comment_at || ticket.updated_at || '';
+  const dateText = formatDateOnlyForDisplay(rawDate);
 
-  if (!comment && !time) return '';
+  if (!comment && !dateText) return '';
 
-  const shortComment = comment.length > 42 ? comment.slice(0, 42) + '...' : comment;
+  const shortComment = comment.length > 38 ? comment.slice(0, 38) + '...' : comment;
 
   return `
-    <div>${escapeHtml(time)}</div>
+    <div>${escapeHtml(dateText)}</div>
     <small>${escapeHtml(shortComment)}</small>
   `;
 }
 
 function clearTicketTable() {
+  APP_STATE.currentTickets = [];
+  APP_STATE.currentEmployeeId = '';
+
   document.getElementById('summaryCards').classList.add('hidden');
   document.getElementById('ticketTableBody').innerHTML = `<tr><td colspan="8" class="empty">目前尚未查詢資料。</td></tr>`;
   document.getElementById('tableTitle').textContent = 'Ticket List';
   document.getElementById('tableHint').textContent = '請先輸入工號查詢，或從 Dashboard 進入。';
+  clearMainFilters();
 }
 
 function openTicketDetail(ticketId) {
@@ -292,33 +594,24 @@ function openTicketDetail(ticketId) {
 }
 
 function renderTicketDetail(ticket) {
-  document.getElementById('detailTitle').textContent = `Ticket 詳細資料：${ticket.ticket_id}`;
+  document.getElementById('detailTitle').textContent = `註冊詳細資料：${ticket.ticket_id}`;
 
   const fields = [
     ['狀態', renderStatus(ticket.display_status), true],
-    ['Ticket ID', ticket.ticket_id],
-    ['工號', ticket.employee_id],
-    ['申請人部門', ticket.requester_department],
+    ['註冊人部門', ticket.requester_department],
     ['註冊人', ticket.requester_name],
-    ['Email', ticket.requester_email],
     ['申請服務部門', ticket.target_department],
     ['需求類別', ticket.service_category],
     ['註冊主題', ticket.registration_subject],
     ['註冊說明', ticket.registration_description],
-    ['附件', ticket.attachment_url ? `<a href="${escapeAttr(ticket.attachment_url)}" target="_blank">開啟附件</a>` : '無', true],
-    ['希望完成日', ticket.due_date],
+    ['附件', renderAttachmentLinks(ticket.attachment_url), true],
+    ['希望完成日', formatDateOnlyForDisplay(ticket.due_date)],
     ['JIRA Key', renderJira(ticket), true],
-    ['JIRA Project', ticket.jira_project],
-    ['JIRA Issue Type', ticket.jira_issue_type],
-    ['負責人 JIRA 帳號', ticket.jira_assignee],
-    ['負責人 Email', ticket.owner_email],
-    ['通知群組', ticket.cc_group],
     ['JIRA 狀態', ticket.jira_status],
-    ['JIRA 最後留言', ticket.jira_last_comment],
-    ['JIRA 最後留言時間', ticket.jira_last_comment_at],
-    ['建立日期', ticket.created_at],
-    ['最後更新', ticket.updated_at],
-    ['完成日期', ticket.completed_at]
+    ['JIRA 最新留言', ticket.jira_last_comment],
+    ['建立日期', formatDateOnlyForDisplay(ticket.created_at)],
+    ['最後更新日期', formatDateOnlyForDisplay(ticket.updated_at)],
+    ['完成日期', formatDateOnlyForDisplay(ticket.completed_at)]
   ];
 
   document.getElementById('detailContent').innerHTML = fields.map(function (field) {
@@ -329,6 +622,11 @@ function renderTicketDetail(ticket) {
       </div>
     `;
   }).join('');
+}
+
+function toggleFormPanel() {
+  const grid = document.getElementById('mainGrid');
+  grid.classList.toggle('form-collapsed');
 }
 
 function openDepartmentAccess() {
@@ -386,10 +684,24 @@ function reloadDeptDashboard() {
       }
 
       renderSummary('deptSummaryCards', res.summary);
-      renderTicketTable('deptTicketTableBody', res.tickets);
+      renderTicketTable('deptTicketTableBody', sortTicketsNewestFirst(res.tickets || []));
     })
     .withFailureHandler(handleServerError)
     .getDepartmentDashboardData(filters);
+}
+
+function renderAttachmentLinks(attachmentUrlText) {
+  const text = String(attachmentUrlText || '').trim();
+
+  if (!text) {
+    return '無';
+  }
+
+  const urls = text.split(/\n+/).filter(Boolean);
+
+  return urls.map(function (url, index) {
+    return `<div><a href="${escapeAttr(url)}" target="_blank">附件 ${index + 1}</a></div>`;
+  }).join('');
 }
 
 function handleOpenGmDashboard() {
@@ -448,6 +760,62 @@ function renderGmDepartments(departments) {
       </div>
     `;
   }).join('');
+}
+
+function sortTicketsNewestFirst(tickets) {
+  return (tickets || []).slice().sort(function (a, b) {
+    return getTicketNumber(b.ticket_id) - getTicketNumber(a.ticket_id);
+  });
+}
+
+function getTicketNumber(ticketId) {
+  const match = String(ticketId || '').match(/(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function formatDateOnlyForDisplay(value) {
+  if (!value) return '';
+
+  const text = String(value).trim();
+
+  const ymdDash = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdDash) {
+    return `${ymdDash[1]}/${ymdDash[2]}/${ymdDash[3]}`;
+  }
+
+  const ymdSlash = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (ymdSlash) {
+    return `${ymdSlash[1]}/${pad2(ymdSlash[2])}/${pad2(ymdSlash[3])}`;
+  }
+
+  const date = new Date(text);
+  if (!isNaN(date.getTime())) {
+    return `${date.getFullYear()}/${pad2(date.getMonth() + 1)}/${pad2(date.getDate())}`;
+  }
+
+  return text.split(' ')[0] || text;
+}
+
+function parseAnyDate(value) {
+  if (!value) return new Date('Invalid Date');
+
+  const text = String(value).trim();
+
+  const ymdDash = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdDash) {
+    return new Date(Number(ymdDash[1]), Number(ymdDash[2]) - 1, Number(ymdDash[3]));
+  }
+
+  const ymdSlash = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (ymdSlash) {
+    return new Date(Number(ymdSlash[1]), Number(ymdSlash[2]) - 1, Number(ymdSlash[3]));
+  }
+
+  return new Date(text);
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
 function openModal(id) {

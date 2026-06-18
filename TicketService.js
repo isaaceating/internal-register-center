@@ -82,7 +82,7 @@ function submitTicket(payload) {
       throw new Error('找不到對應的 Service_Config，請確認申請服務部門與需求類別設定。');
     }
 
-    const attachmentUrl = handleAttachment_(payload.attachment);
+    const attachmentUrl = handleAttachments_(payload.attachments || payload.attachment);
 
     const ticket = {
       ticket_id: ticketId,
@@ -224,20 +224,53 @@ function findServiceConfig_(targetDepartment, serviceCategory) {
   }) || null;
 }
 
-function handleAttachment_(attachment) {
-  if (!attachment || !attachment.data || !attachment.name) return '';
+function handleAttachments_(attachments) {
+  if (!attachments) return '';
 
   const folderId = getScriptSetting_('ATTACHMENT_FOLDER_ID', '');
   if (!folderId) {
     return '';
   }
 
-  const folder = DriveApp.getFolderById(folderId);
-  const bytes = Utilities.base64Decode(attachment.data);
-  const blob = Utilities.newBlob(bytes, attachment.mimeType || 'application/octet-stream', attachment.name);
-  const file = folder.createFile(blob);
+  let list = [];
 
-  return file.getUrl();
+  if (Array.isArray(attachments)) {
+    list = attachments;
+  } else {
+    list = [attachments];
+  }
+
+  list = list.filter(function (item) {
+    return item && item.data && item.name;
+  });
+
+  if (list.length === 0) return '';
+
+  if (list.length > 5) {
+    throw new Error('附件最多只能上傳 5 個。');
+  }
+
+  const folder = DriveApp.getFolderById(folderId);
+  const urls = [];
+
+  list.forEach(function (attachment) {
+    const bytes = Utilities.base64Decode(attachment.data);
+
+    if (bytes.length > 10 * 1024 * 1024) {
+      throw new Error('附件「' + attachment.name + '」超過 10MB，請壓縮或改用 Drive 連結。');
+    }
+
+    const blob = Utilities.newBlob(
+      bytes,
+      attachment.mimeType || 'application/octet-stream',
+      attachment.name
+    );
+
+    const file = folder.createFile(blob);
+    urls.push(file.getUrl());
+  });
+
+  return urls.join('\n');
 }
 
 function clean_(value) {

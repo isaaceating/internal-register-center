@@ -13,7 +13,8 @@ function queryTicketsByEmployee(employeeId) {
     .filter(function (row) {
       return String(row.employee_id).trim() === id;
     })
-    .map(ticketToViewModel_);
+    .map(ticketToViewModel_)
+    .sort(sortTicketByIdDesc_);
 
   return {
     ok: true,
@@ -81,7 +82,7 @@ function getDepartmentDashboardData(filters) {
     })
     .map(ticketToViewModel_);
 
-  tickets = applyTicketFilters_(tickets, filters);
+  tickets = applyTicketFilters_(tickets, filters).sort(sortTicketByIdDesc_);
 
   return {
     ok: true,
@@ -100,7 +101,8 @@ function getGmDashboardData(payload) {
   if (!access.ok) return access;
 
   const tickets = getRowsAsObjects_(APP_CONFIG.SHEETS.TICKETS)
-    .map(ticketToViewModel_);
+    .map(ticketToViewModel_)
+    .sort(sortTicketByIdDesc_);
 
   const byDepartment = {};
 
@@ -184,17 +186,18 @@ function applyTicketFilters_(tickets, filters) {
   }
 
   if (startDate) {
-    const start = new Date(startDate);
+    const start = parseDateForCompare_(startDate);
     result = result.filter(function (ticket) {
-      return new Date(ticket.created_at) >= start;
+      return parseDateForCompare_(ticket.created_at) >= start;
     });
   }
 
   if (endDate) {
-    const end = new Date(endDate);
+    const end = parseDateForCompare_(endDate);
     end.setHours(23, 59, 59, 999);
+
     result = result.filter(function (ticket) {
-      return new Date(ticket.created_at) <= end;
+      return parseDateForCompare_(ticket.created_at) <= end;
     });
   }
 
@@ -215,7 +218,7 @@ function ticketToViewModel_(row) {
     registration_subject: String(row.registration_subject || ''),
     registration_description: String(row.registration_description || ''),
     attachment_url: String(row.attachment_url || ''),
-    due_date: normalizeDateString_(row.due_date),
+    due_date: normalizeDateOnlyForView_(row.due_date),
     display_status: displayStatus,
     center_status: String(row.center_status || ''),
     jira_key: String(row.jira_key || ''),
@@ -227,10 +230,10 @@ function ticketToViewModel_(row) {
     cc_group: String(row.cc_group || ''),
     jira_status: String(row.jira_status || ''),
     jira_last_comment: String(row.jira_last_comment || ''),
-    jira_last_comment_at: String(row.jira_last_comment_at || ''),
-    created_at: normalizeDateTimeForView_(row.created_at),
-    updated_at: normalizeDateTimeForView_(row.updated_at),
-    completed_at: normalizeDateTimeForView_(row.completed_at),
+    jira_last_comment_at: normalizeDateOnlyForView_(row.jira_last_comment_at),
+    created_at: normalizeDateOnlyForView_(row.created_at),
+    updated_at: normalizeDateOnlyForView_(row.updated_at),
+    completed_at: normalizeDateOnlyForView_(row.completed_at),
     overdue_flag: displayStatus === APP_CONFIG.STATUS.OVERDUE ? 'TRUE' : 'FALSE'
   };
 }
@@ -248,7 +251,7 @@ function calculateTicketDisplayStatusFromRow_(row) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const due = new Date(dueDate);
+    const due = parseDateForCompare_(dueDate);
     due.setHours(0, 0, 0, 0);
 
     if (!isNaN(due.getTime()) && due < today) {
@@ -280,12 +283,64 @@ function buildSummary_(tickets) {
   return summary;
 }
 
-function normalizeDateTimeForView_(value) {
+function sortTicketByIdDesc_(a, b) {
+  return getTicketNumber_(b.ticket_id) - getTicketNumber_(a.ticket_id);
+}
+
+function getTicketNumber_(ticketId) {
+  const match = String(ticketId || '').match(/(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function normalizeDateOnlyForView_(value) {
   if (!value) return '';
 
   if (Object.prototype.toString.call(value) === '[object Date]') {
-    return formatDateTime_(value);
+    return Utilities.formatDate(value, APP_CONFIG.TIMEZONE, 'yyyy/MM/dd');
   }
 
-  return String(value);
+  const text = String(value).trim();
+
+  const dashMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dashMatch) {
+    return dashMatch[1] + '/' + dashMatch[2] + '/' + dashMatch[3];
+  }
+
+  const slashMatch = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (slashMatch) {
+    return slashMatch[1] + '/' + pad2_(slashMatch[2]) + '/' + pad2_(slashMatch[3]);
+  }
+
+  const parsed = new Date(text);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, APP_CONFIG.TIMEZONE, 'yyyy/MM/dd');
+  }
+
+  return text.split(' ')[0] || text;
+}
+
+function parseDateForCompare_(value) {
+  if (!value) return new Date('Invalid Date');
+
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return value;
+  }
+
+  const text = String(value).trim();
+
+  const dashMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dashMatch) {
+    return new Date(Number(dashMatch[1]), Number(dashMatch[2]) - 1, Number(dashMatch[3]));
+  }
+
+  const slashMatch = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (slashMatch) {
+    return new Date(Number(slashMatch[1]), Number(slashMatch[2]) - 1, Number(slashMatch[3]));
+  }
+
+  return new Date(text);
+}
+
+function pad2_(value) {
+  return String(value).padStart(2, '0');
 }
