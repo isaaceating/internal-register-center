@@ -10,7 +10,8 @@ let APP_STATE = {
   },
   currentTickets: [],
   currentEmployeeId: '',
-  selectedFiles: []
+  selectedFiles: [],
+  isSubmitting: false
 };
 
 const MAX_ATTACHMENT_COUNT = 5;
@@ -286,21 +287,47 @@ function readFilesAsAttachments(files) {
   }));
 }
 
+function setSubmitLoading(isLoading, message) {
+  APP_STATE.isSubmitting = isLoading;
+
+  const overlay = document.getElementById('submitOverlay');
+  const overlayText = document.getElementById('submitOverlayText');
+  const submitBtn = document.getElementById('submitBtn');
+
+  if (overlayText && message) {
+    overlayText.textContent = message;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = isLoading;
+    submitBtn.textContent = isLoading ? '送出中...' : '送出申請';
+  }
+
+  if (overlay) {
+    if (isLoading) {
+      overlay.classList.remove('hidden');
+    } else {
+      overlay.classList.add('hidden');
+    }
+  }
+}
+
 function handleSubmitTicket(event) {
   event.preventDefault();
+
+  if (APP_STATE.isSubmitting) {
+    showToast('申請正在送出中，請勿重複送出。', 'error');
+    return;
+  }
 
   const requesterDepartment = document.getElementById('requester_department').value.trim();
   const requesterName = document.getElementById('requester_name').value.trim();
   const requesterEmail = document.getElementById('requester_email').value.trim();
 
   if (!requesterDepartment || !requesterName || !requesterEmail) {
-    renderEmployeeInfoError('請先輸入正確工號並按「輸入」，確認系統帶出部門、姓名與 Email 後再送出。');
+    renderEmployeeInfoError('請先輸入正確工號並按「驗證」，確認系統帶出部門、姓名與 Email 後再送出。');
     return;
   }
-
-  const submitBtn = document.getElementById('submitBtn');
-  submitBtn.disabled = true;
-  submitBtn.textContent = '送出中...';
 
   const form = document.getElementById('ticketForm');
   const files = APP_STATE.selectedFiles || [];
@@ -319,46 +346,27 @@ function handleSubmitTicket(event) {
     attachments: []
   };
 
+  setSubmitLoading(true, '系統正在讀取附件、建立申請、建立 JIRA 並寄送通知信，請勿重新整理或重複送出。');
+
   if (files.length > 0) {
     readFilesAsAttachments(files)
       .then(function (attachments) {
         payload.attachments = attachments;
-        submitPayload(payload, submitBtn, form);
+        submitPayload(payload, form);
       })
       .catch(function () {
-        submitBtn.disabled = false;
-        submitBtn.textContent = '送出申請';
+        setSubmitLoading(false);
         showToast('附件讀取失敗，請重新選擇檔案。', 'error');
       });
   } else {
-    submitPayload(payload, submitBtn, form);
+    submitPayload(payload, form);
   }
 }
 
-function readFilesAsAttachments(files) {
-  return Promise.all(files.map(function (file) {
-    return new Promise(function (resolve, reject) {
-      const reader = new FileReader();
-
-      reader.onload = function (e) {
-        resolve({
-          name: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          data: String(e.target.result).split(',')[1]
-        });
-      };
-
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }));
-}
-
-function submitPayload(payload, submitBtn, form) {
+function submitPayload(payload, form) {
   google.script.run
     .withSuccessHandler(function (res) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = '送出申請';
+      setSubmitLoading(false);
 
       if (!res.ok) {
         showToast(res.message || '送出失敗', 'error');
@@ -382,8 +390,7 @@ function submitPayload(payload, submitBtn, form) {
       handleQueryTickets();
     })
     .withFailureHandler(function (err) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = '送出申請';
+      setSubmitLoading(false);
       handleServerError(err);
     })
     .submitTicket(payload);
@@ -488,19 +495,19 @@ function renderSummary(containerId, summary) {
 
   el.innerHTML = `
     <div class="summary-card">
-      <div class="label">Total</div>
+      <div class="label">總案件數</div>
       <div class="value">${summary.total || 0}</div>
     </div>
     <div class="summary-card open">
-      <div class="label">Open</div>
+      <div class="label">處理中</div>
       <div class="value">${summary.open || 0}</div>
     </div>
     <div class="summary-card overdue">
-      <div class="label">Overdue</div>
+      <div class="label">已逾期</div>
       <div class="value">${summary.overdue || 0}</div>
     </div>
     <div class="summary-card done">
-      <div class="label">Done</div>
+      <div class="label">已完成</div>
       <div class="value">${summary.done || 0}</div>
     </div>
   `;
@@ -741,19 +748,19 @@ function renderGmDepartments(departments) {
         <h3>${escapeHtml(item.department)}</h3>
         <div class="dept-stats">
           <div class="dept-stat">
-            <div class="label">Total</div>
+            <div class="label">總案件數</div>
             <div class="value">${s.total || 0}</div>
           </div>
           <div class="dept-stat">
-            <div class="label">Open</div>
+            <div class="label">處理中</div>
             <div class="value" style="color:#2563eb">${s.open || 0}</div>
           </div>
           <div class="dept-stat">
-            <div class="label">Overdue</div>
+            <div class="label">已逾期</div>
             <div class="value" style="color:#dc2626">${s.overdue || 0}</div>
           </div>
           <div class="dept-stat">
-            <div class="label">Done</div>
+            <div class="label">已完成</div>
             <div class="value" style="color:#16a34a">${s.done || 0}</div>
           </div>
         </div>

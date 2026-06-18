@@ -129,9 +129,9 @@
           <div class="main-filter-row">
             <select id="mainFilterStatus" onchange="applyMainFilters()">
               <option value="">全部狀態</option>
-              <option value="Open">Open</option>
-              <option value="Overdue">Overdue</option>
-              <option value="Done">Done</option>
+              <option value="Open">處理中</option>
+              <option value="Overdue">已逾期</option>
+              <option value="Done">完成</option>
             </select>
 
             <input id="mainFilterStart" type="date" onchange="applyMainFilters()">
@@ -183,6 +183,13 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="submitOverlay" class="submit-overlay hidden">
+    <div class="submit-overlay-card">
+      <div class="submit-spinner"></div>
+      <h2>正在送出申請</h2>
+      <p id="submitOverlayText">系統正在建立申請、建立 JIRA 並寄送通知信，請勿重新整理或重複送出。</p>
+    </div>
+  </div>
 
   <div id="detailModal" class="modal hidden">
     <div class="modal-backdrop" onclick="closeModal('detailModal')"></div>
@@ -248,9 +255,9 @@
       <div class="filter-row">
         <select id="deptFilterStatus">
           <option value="">所有狀態</option>
-          <option value="Open">Open</option>
-          <option value="Overdue">Overdue</option>
-          <option value="Done">Done</option>
+          <option value="Open">處理中</option>
+          <option value="Overdue">已逾期</option>
+          <option value="Done">完成</option>
         </select>
 
         <input id="deptFilterStart" type="date">
